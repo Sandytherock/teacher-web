@@ -17,6 +17,7 @@ import { auth, provider, db } from "./firebase";
 import { isTeacherEmail } from "./teacherAccess";
 
 const TOKEN_ENDPOINT = "https://tokenyodha-api.vercel.app/api/agoraToken";
+const FALLBACK_APP_ID = "f62387c2a1f74173a83a882fbd37b2f9";
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -84,7 +85,9 @@ export default function App() {
       body: JSON.stringify({ channelName, uid: 0, role: "broadcaster" }),
     });
     if (!res.ok) throw new Error(await res.text());
-    return res.json();
+    const data = await res.json();
+    if (!data?.token) throw new Error("Token API returned no token");
+    return { token: data.token, appId: data.appId || FALLBACK_APP_ID };
   };
 
   const joinClass = async () => {
