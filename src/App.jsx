@@ -140,6 +140,7 @@ export default function App() {
     const audio = await AgoraRTC.createMicrophoneAudioTrack();
     localTracksRef.current.audio = audio;
     await clientRef.current.publish(audio);
+    await audio.setEnabled(true);
     setMicOn(true);
     setPublishing(true);
     setStatus("Mic live");
@@ -163,6 +164,7 @@ export default function App() {
       const [audio, video] = await AgoraRTC.createMicrophoneAndCameraTracks();
       localTracksRef.current = { audio, video };
       await clientRef.current.publish([audio, video]);
+      await audio.setEnabled(true);
       setMicOn(true);
       setCamOn(true);
       video.play("local-player");
@@ -198,18 +200,25 @@ export default function App() {
       { encoderConfig: "1080p_1" },
       "auto"
     );
-    screenTrackRef.current = track;
+    const videoTrack = Array.isArray(track) ? track[0] : track;
+    screenTrackRef.current = videoTrack;
 
     if (localTracksRef.current.video) {
       await clientRef.current.unpublish(localTracksRef.current.video);
     }
 
-    await clientRef.current.publish(track);
+    await clientRef.current.publish(videoTrack);
     document.getElementById("local-player").innerHTML = "";
-    track.play("local-player");
+    videoTrack.play("local-player");
     setScreenOn(true);
     setPublishing(true);
     setStatus("Screen share live");
+
+    if (videoTrack?.on) {
+      videoTrack.on("track-ended", () => {
+        stopShare().catch(() => {});
+      });
+    }
   };
 
   const stopShare = async () => {
