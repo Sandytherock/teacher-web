@@ -212,6 +212,11 @@ export default function App() {
       await clientRef.current.unpublish(localTracksRef.current.video);
     }
 
+    if (localTracksRef.current.audio) {
+      await clientRef.current.publish(localTracksRef.current.audio);
+      await localTracksRef.current.audio.setEnabled(true);
+    }
+
     await clientRef.current.publish(videoTrack);
     document.getElementById("local-player").innerHTML = "";
     videoTrack.play("local-player");
