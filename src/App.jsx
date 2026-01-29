@@ -30,6 +30,9 @@ export default function App() {
   const [hands, setHands] = useState([]);
   const [joined, setJoined] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [micOn, setMicOn] = useState(false);
+  const [camOn, setCamOn] = useState(false);
+  const [screenOn, setScreenOn] = useState(false);
 
   const clientRef = useRef(null);
   const localTracksRef = useRef({ audio: null, video: null });
@@ -124,26 +127,88 @@ export default function App() {
     clientRef.current = null;
     setJoined(false);
     setPublishing(false);
+    setMicOn(false);
+    setCamOn(false);
+    setScreenOn(false);
     setStatus("Left");
+  };
+
+  const startMic = async () => {
+    if (!clientRef.current) return;
+    if (localTracksRef.current.audio) return;
+    setStatus("Starting mic...");
+    const audio = await AgoraRTC.createMicrophoneAudioTrack();
+    localTracksRef.current.audio = audio;
+    await clientRef.current.publish(audio);
+    setMicOn(true);
+    setPublishing(true);
+    setStatus("Mic live");
+  };
+
+  const stopMic = async () => {
+    if (!clientRef.current || !localTracksRef.current.audio) return;
+    await clientRef.current.unpublish(localTracksRef.current.audio);
+    localTracksRef.current.audio.close();
+    localTracksRef.current.audio = null;
+    setMicOn(false);
+    setStatus("Mic off");
   };
 
   const startCamera = async () => {
     if (!clientRef.current) return;
-    const [audio, video] = await AgoraRTC.createMicrophoneAndCameraTracks();
-    localTracksRef.current = { audio, video };
-    await clientRef.current.publish([audio, video]);
+    if (localTracksRef.current.video) return;
+
+    setStatus("Starting camera...");
+    if (!localTracksRef.current.audio) {
+      const [audio, video] = await AgoraRTC.createMicrophoneAndCameraTracks();
+      localTracksRef.current = { audio, video };
+      await clientRef.current.publish([audio, video]);
+      setMicOn(true);
+      setCamOn(true);
+      video.play("local-player");
+      setPublishing(true);
+      setStatus("Camera live");
+      return;
+    }
+
+    const video = await AgoraRTC.createCameraVideoTrack();
+    localTracksRef.current.video = video;
+    await clientRef.current.publish(video);
     video.play("local-player");
+    setCamOn(true);
     setPublishing(true);
     setStatus("Camera live");
   };
 
+  const stopCamera = async () => {
+    if (!clientRef.current || !localTracksRef.current.video) return;
+    await clientRef.current.unpublish(localTracksRef.current.video);
+    localTracksRef.current.video.close();
+    localTracksRef.current.video = null;
+    setCamOn(false);
+    setStatus("Camera off");
+  };
+
   const startScreenShare = async () => {
     if (!clientRef.current) return;
-    const track = await AgoraRTC.createScreenVideoTrack({ encoderConfig: "1080p_1" }, "auto");
+    if (screenTrackRef.current) return;
+
+    setStatus("Starting screen share...");
+    const track = await AgoraRTC.createScreenVideoTrack(
+      { encoderConfig: "1080p_1" },
+      "auto"
+    );
     screenTrackRef.current = track;
+
+    if (localTracksRef.current.video) {
+      await clientRef.current.unpublish(localTracksRef.current.video);
+    }
+
     await clientRef.current.publish(track);
     document.getElementById("local-player").innerHTML = "";
     track.play("local-player");
+    setScreenOn(true);
+    setPublishing(true);
     setStatus("Screen share live");
   };
 
@@ -152,8 +217,10 @@ export default function App() {
     await clientRef.current.unpublish(screenTrackRef.current);
     screenTrackRef.current.close();
     screenTrackRef.current = null;
+    setScreenOn(false);
     setStatus("Screen share stopped");
     if (localTracksRef.current.video) {
+      await clientRef.current.publish(localTracksRef.current.video);
       document.getElementById("local-player").innerHTML = "";
       localTracksRef.current.video.play("local-player");
     }
@@ -161,11 +228,14 @@ export default function App() {
 
   const endClass = async () => {
     if (!selected?.id) return;
-    await updateDoc(doc(db, "liveClasses", selected.id), {
-      status: "completed",
-      endedAt: serverTimestamp(),
-    });
-    await leaveClass();
+    try {
+      await updateDoc(doc(db, "liveClasses", selected.id), {
+        status: "completed",
+        endedAt: serverTimestamp(),
+      });
+    } finally {
+      await leaveClass();
+    }
   };
 
   const sendChat = async () => {
@@ -235,13 +305,22 @@ export default function App() {
               </div>
 
               <div className="controls">
-                <button className="btn" onClick={startCamera} disabled={!joined}>
+                <button className="btn" onClick={startMic} disabled={!joined || micOn}>
+                  Start Mic
+                </button>
+                <button className="btn secondary" onClick={stopMic} disabled={!joined || !micOn}>
+                  Stop Mic
+                </button>
+                <button className="btn" onClick={startCamera} disabled={!joined || camOn}>
                   Start Camera
                 </button>
-                <button className="btn" onClick={startScreenShare} disabled={!joined}>
+                <button className="btn secondary" onClick={stopCamera} disabled={!joined || !camOn}>
+                  Stop Camera
+                </button>
+                <button className="btn" onClick={startScreenShare} disabled={!joined || screenOn}>
                   Screen Share
                 </button>
-                <button className="btn danger" onClick={stopShare} disabled={!joined}>
+                <button className="btn secondary" onClick={stopShare} disabled={!joined || !screenOn}>
                   Stop Share
                 </button>
                 <button className="btn danger" onClick={endClass} disabled={!joined}>
