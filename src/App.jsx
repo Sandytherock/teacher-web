@@ -16,7 +16,7 @@ import { signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
 import { auth, provider, db } from "./firebase";
 import { isTeacherEmail } from "./teacherAccess";
 
-const TOKEN_ENDPOINT = "/api/agoraToken";
+const TOKEN_ENDPOINT = "https://tokenyodha-api.vercel.app/api/agoraToken";
 
 export default function App() {
   const [user, setUser] = useState(null);
