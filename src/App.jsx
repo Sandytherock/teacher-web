@@ -107,6 +107,11 @@ export default function App() {
       status: "live",
       startedAt: serverTimestamp(),
     });
+    try {
+      await startMic();
+    } catch (e) {
+      // ignore mic auto-start errors
+    }
   };
 
   const leaveClass = async () => {
