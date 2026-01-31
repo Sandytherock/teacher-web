@@ -330,33 +330,36 @@ export default function App() {
 
               <div className="controls">
                 <button className="btn success" onClick={joinClass} disabled={!selected || joined}>
-                  Join Class
+                  Go Live
                 </button>
                 <button className="btn secondary" onClick={leaveClass} disabled={!joined}>
                   Leave
                 </button>
               </div>
 
-              <div className="controls">
-                <button className="btn" onClick={startMic} disabled={!joined || micOn}>
-                  Start Mic
+              <div className="toggleRow">
+                <button
+                  className={`toggleBtn ${micOn ? "active" : ""}`}
+                  onClick={() => (micOn ? stopMic() : startMic())}
+                  disabled={!joined}
+                >
+                  {micOn ? "Mic On" : "Mic Off"}
                 </button>
-                <button className="btn secondary" onClick={stopMic} disabled={!joined || !micOn}>
-                  Stop Mic
+                <button
+                  className={`toggleBtn ${camOn ? "active" : ""}`}
+                  onClick={() => (camOn ? stopCamera() : startCamera())}
+                  disabled={!joined}
+                >
+                  {camOn ? "Camera On" : "Camera Off"}
                 </button>
-                <button className="btn" onClick={startCamera} disabled={!joined || camOn}>
-                  Start Camera
+                <button
+                  className={`toggleBtn ${screenOn ? "active" : ""}`}
+                  onClick={() => (screenOn ? stopShare() : startScreenShare())}
+                  disabled={!joined}
+                >
+                  {screenOn ? "Stop Share" : "Share Screen"}
                 </button>
-                <button className="btn secondary" onClick={stopCamera} disabled={!joined || !camOn}>
-                  Stop Camera
-                </button>
-                <button className="btn" onClick={startScreenShare} disabled={!joined || screenOn}>
-                  Screen Share
-                </button>
-                <button className="btn secondary" onClick={stopShare} disabled={!joined || !screenOn}>
-                  Stop Share
-                </button>
-                <button className="btn danger" onClick={endClass} disabled={!joined}>
+                <button className="toggleBtn danger" onClick={endClass} disabled={!joined}>
                   End Class
                 </button>
               </div>

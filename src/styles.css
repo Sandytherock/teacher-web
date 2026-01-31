@@ -1,11 +1,11 @@
 :root {
-  --bg: #0b1220;
-  --panel: #0f172a;
-  --border: #1f2937;
-  --text: #e5e7eb;
-  --muted: #9ca3af;
+  --bg: #f8fafc;
+  --panel: #ffffff;
+  --border: #e5e7eb;
+  --text: #111827;
+  --muted: #6b7280;
   --accent: #2563eb;
-  --danger: #b91c1c;
+  --danger: #dc2626;
   --success: #10b981;
 }
 * {
@@ -60,7 +60,7 @@ input, select {
   padding: 10px 12px;
   border-radius: 8px;
   border: 1px solid var(--border);
-  background: #0b1324;
+  background: #f9fafb;
   color: var(--text);
 }
 .btn {
@@ -84,7 +84,7 @@ input, select {
   min-height: 18px;
 }
 .stage {
-  background: #0b1020;
+  background: #0f172a;
   border: 1px solid var(--border);
   border-radius: 12px;
   min-height: 520px;
@@ -110,7 +110,7 @@ input, select {
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 10px;
-  background: #0b1324;
+  background: #f9fafb;
   display: grid;
   gap: 6px;
 }
@@ -122,6 +122,7 @@ input, select {
   font-size: 11px;
   border: 1px solid var(--border);
   color: var(--muted);
+  background: #f1f5f9;
 }
 .controls {
   display: grid;
@@ -160,6 +161,31 @@ input, select {
   border-radius: 999px;
   padding: 6px 10px;
   font-size: 16px;
+}
+
+.toggleRow {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.toggleBtn {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: #f1f5f9;
+  color: #111827;
+  font-weight: 700;
+  cursor: pointer;
+}
+.toggleBtn.active {
+  background: #10b981;
+  color: #fff;
+  border-color: #10b981;
+}
+.toggleBtn.danger {
+  background: #fee2e2;
+  color: #b91c1c;
+  border-color: #fecaca;
 }
 @media (max-width: 900px) {
   .grid { grid-template-columns: 1fr; }
