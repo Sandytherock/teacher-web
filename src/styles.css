@@ -149,6 +149,18 @@ input, select {
   gap: 8px;
   margin-top: 8px;
 }
+.reactionFeed {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.reactionPill {
+  background: #f1f5f9;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 16px;
+}
 @media (max-width: 900px) {
   .grid { grid-template-columns: 1fr; }
   .stage { min-height: 360px; }

@@ -28,6 +28,7 @@ export default function App() {
   const [chatMessages, setChatMessages] = useState([]);
   const [chatText, setChatText] = useState("");
   const [hands, setHands] = useState([]);
+  const [reactionsFeed, setReactionsFeed] = useState([]);
   const [joined, setJoined] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [micOn, setMicOn] = useState(false);
@@ -58,6 +59,7 @@ export default function App() {
     if (!selected?.id) return;
     const chatRef = collection(db, "liveClasses", selected.id, "chatMessages");
     const handsRef = collection(db, "liveClasses", selected.id, "hands");
+    const reactionsRef = collection(db, "liveClasses", selected.id, "reactions");
 
     const chatUnsub = onSnapshot(query(chatRef, orderBy("createdAt", "asc")), (snap) => {
       setChatMessages(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
@@ -65,9 +67,16 @@ export default function App() {
     const handsUnsub = onSnapshot(handsRef, (snap) => {
       setHands(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     });
+    const reactionsUnsub = onSnapshot(
+      query(reactionsRef, orderBy("createdAt", "desc")),
+      (snap) => {
+        setReactionsFeed(snap.docs.map((d) => ({ id: d.id, ...d.data() })).slice(0, 12));
+      }
+    );
     return () => {
       chatUnsub();
       handsUnsub();
+      reactionsUnsub();
     };
   }, [selected?.id]);
 
@@ -398,6 +407,21 @@ export default function App() {
                 onChange={(e) => setChatText(e.target.value)}
               />
               <button className="btn" onClick={sendChat}>Send</button>
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="panelTitle">Reactions</div>
+            <div className="reactionFeed">
+              {reactionsFeed.length === 0 ? (
+                <div className="hint">No reactions yet</div>
+              ) : (
+                reactionsFeed.map((r) => (
+                  <span key={r.id} className="reactionPill">
+                    {r.emoji}
+                  </span>
+                ))
+              )}
             </div>
           </div>
 
