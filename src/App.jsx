@@ -142,13 +142,18 @@ export default function App() {
     if (!clientRef.current) return;
     if (localTracksRef.current.audio) return;
     setStatus("Starting mic...");
-    const audio = await AgoraRTC.createMicrophoneAudioTrack();
-    localTracksRef.current.audio = audio;
-    await clientRef.current.publish(audio);
-    await audio.setEnabled(true);
-    setMicOn(true);
-    setPublishing(true);
-    setStatus("Mic live");
+    try {
+      const audio = await AgoraRTC.createMicrophoneAudioTrack();
+      if (audio.setVolume) audio.setVolume(100);
+      localTracksRef.current.audio = audio;
+      await clientRef.current.publish(audio);
+      await audio.setEnabled(true);
+      setMicOn(true);
+      setPublishing(true);
+      setStatus("Mic live");
+    } catch (e) {
+      setStatus(`Mic error: ${e?.message || e}`);
+    }
   };
 
   const stopMic = async () => {
