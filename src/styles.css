@@ -87,7 +87,8 @@ input, select {
   background: #0f172a;
   border: 1px solid var(--border);
   border-radius: 12px;
-  min-height: 520px;
+  aspect-ratio: 16 / 9;
+  min-height: 0;
   display: grid;
   place-items: center;
   overflow: hidden;
@@ -95,6 +96,12 @@ input, select {
 #local-player {
   width: 100%;
   height: 100%;
+}
+#local-player video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
 }
 .hint {
   font-size: 12px;
@@ -189,5 +196,5 @@ input, select {
 }
 @media (max-width: 900px) {
   .grid { grid-template-columns: 1fr; }
-  .stage { min-height: 360px; }
+  .stage { min-height: 220px; }
 }

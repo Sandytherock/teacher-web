@@ -9,7 +9,6 @@ import {
   doc,
   serverTimestamp,
   addDoc,
-  setDoc,
   deleteDoc,
 } from "firebase/firestore";
 import { signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
@@ -18,6 +17,17 @@ import { isTeacherEmail } from "./teacherAccess";
 
 const TOKEN_ENDPOINT = "https://tokenyodha-api.vercel.app/api/agoraToken";
 const FALLBACK_APP_ID = "f62387c2a1f74173a83a882fbd37b2f9";
+const LANDSCAPE_WIDTH = 1280;
+const LANDSCAPE_HEIGHT = 720;
+const LANDSCAPE_ASPECT = LANDSCAPE_WIDTH / LANDSCAPE_HEIGHT;
+const LANDSCAPE_ENCODER_CONFIG = {
+  width: LANDSCAPE_WIDTH,
+  height: LANDSCAPE_HEIGHT,
+  frameRate: 30,
+  bitrateMin: 1200,
+  bitrateMax: 3000,
+};
+const SCREEN_PREVIEW_CONFIG = { fit: "contain", mirror: false };
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -34,10 +44,13 @@ export default function App() {
   const [micOn, setMicOn] = useState(false);
   const [camOn, setCamOn] = useState(false);
   const [screenOn, setScreenOn] = useState(false);
+  const [videoStats, setVideoStats] = useState(null);
 
   const clientRef = useRef(null);
   const localTracksRef = useRef({ audio: null, video: null });
-  const screenTrackRef = useRef(null);
+  const videoSourceRef = useRef(null);
+  const videoPipelineRef = useRef(null);
+  const statsIntervalRef = useRef(null);
 
   useEffect(() => {
     return onAuthStateChanged(auth, (u) => {
@@ -80,8 +93,6 @@ export default function App() {
     };
   }, [selected?.id]);
 
-  const canUse = useMemo(() => !!user && allowed, [user, allowed]);
-
   const signIn = async () => {
     await signInWithPopup(auth, provider);
   };
@@ -100,6 +111,181 @@ export default function App() {
     const data = await res.json();
     if (!data?.token) throw new Error("Token API returned no token");
     return { token: data.token, appId: data.appId || FALLBACK_APP_ID };
+  };
+
+  const clearStatsPolling = () => {
+    if (statsIntervalRef.current) {
+      window.clearInterval(statsIntervalRef.current);
+      statsIntervalRef.current = null;
+    }
+    setVideoStats(null);
+  };
+
+  const startStatsPolling = () => {
+    clearStatsPolling();
+    statsIntervalRef.current = window.setInterval(() => {
+      const client = clientRef.current;
+      if (!client || !localTracksRef.current.video) {
+        setVideoStats(null);
+        return;
+      }
+
+      try {
+        setVideoStats(client.getLocalVideoStats());
+      } catch {
+        setVideoStats(null);
+      }
+    }, 2000);
+  };
+
+  const stopVideoPipeline = () => {
+    const pipeline = videoPipelineRef.current;
+    if (pipeline?.cancelFrame) pipeline.cancelFrame();
+    if (pipeline?.videoEl) {
+      pipeline.videoEl.pause();
+      pipeline.videoEl.srcObject = null;
+    }
+    if (pipeline?.stream) {
+      pipeline.stream.getTracks().forEach((track) => track.stop());
+    }
+    videoPipelineRef.current = null;
+  };
+
+  const clearLocalPlayer = () => {
+    const player = document.getElementById("local-player");
+    if (player) player.innerHTML = "";
+  };
+
+  const drawLandscapeFrame = (ctx, sourceEl) => {
+    const sourceWidth = sourceEl.videoWidth || LANDSCAPE_WIDTH;
+    const sourceHeight = sourceEl.videoHeight || LANDSCAPE_HEIGHT;
+
+    if (!sourceWidth || !sourceHeight) return;
+
+    const sourceAspect = sourceWidth / sourceHeight;
+    let sx = 0;
+    let sy = 0;
+    let sw = sourceWidth;
+    let sh = sourceHeight;
+
+    if (sourceAspect > LANDSCAPE_ASPECT) {
+      sw = sourceHeight * LANDSCAPE_ASPECT;
+      sx = (sourceWidth - sw) / 2;
+    } else if (sourceAspect < LANDSCAPE_ASPECT) {
+      sh = sourceWidth / LANDSCAPE_ASPECT;
+      sy = (sourceHeight - sh) / 2;
+    }
+
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, LANDSCAPE_WIDTH, LANDSCAPE_HEIGHT);
+    ctx.drawImage(sourceEl, sx, sy, sw, sh, 0, 0, LANDSCAPE_WIDTH, LANDSCAPE_HEIGHT);
+  };
+
+  const createLandscapeVideoTrack = async (sourceTrack, { optimizationMode, mirror }) => {
+    const sourceMediaTrack = sourceTrack.getMediaStreamTrack();
+    const videoEl = document.createElement("video");
+    videoEl.muted = true;
+    videoEl.playsInline = true;
+    videoEl.autoplay = true;
+    videoEl.srcObject = new MediaStream([sourceMediaTrack]);
+
+    await new Promise((resolve) => {
+      if (videoEl.readyState >= 1) {
+        resolve();
+        return;
+      }
+      videoEl.onloadedmetadata = () => resolve();
+    });
+    await videoEl.play();
+
+    const canvas = document.createElement("canvas");
+    canvas.width = LANDSCAPE_WIDTH;
+    canvas.height = LANDSCAPE_HEIGHT;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Unable to create 2D canvas context");
+
+    let rafId = null;
+    let frameCallbackId = null;
+    let stopped = false;
+
+    const renderFrame = () => {
+      if (stopped) return;
+      drawLandscapeFrame(ctx, videoEl);
+
+      if (typeof videoEl.requestVideoFrameCallback === "function") {
+        frameCallbackId = videoEl.requestVideoFrameCallback(() => {
+          renderFrame();
+        });
+      } else {
+        rafId = window.requestAnimationFrame(renderFrame);
+      }
+    };
+
+    renderFrame();
+
+    const stream = canvas.captureStream(LANDSCAPE_ENCODER_CONFIG.frameRate);
+    const [canvasTrack] = stream.getVideoTracks();
+    const publishedTrack = AgoraRTC.createCustomVideoTrack({
+      mediaStreamTrack: canvasTrack,
+      encoderConfig: LANDSCAPE_ENCODER_CONFIG,
+      optimizationMode,
+    });
+    await publishedTrack.setEncoderConfiguration(LANDSCAPE_ENCODER_CONFIG);
+
+    return {
+      track: publishedTrack,
+      previewConfig: { fit: "contain", mirror },
+      stream,
+      videoEl,
+      cancelFrame: () => {
+        stopped = true;
+        if (
+          frameCallbackId !== null &&
+          typeof videoEl.cancelVideoFrameCallback === "function"
+        ) {
+          videoEl.cancelVideoFrameCallback(frameCallbackId);
+        }
+        if (rafId !== null) {
+          window.cancelAnimationFrame(rafId);
+        }
+      },
+    };
+  };
+
+  const unpublishCurrentVideo = async () => {
+    const client = clientRef.current;
+    const publishedTrack = localTracksRef.current.video;
+
+    clearStatsPolling();
+
+    if (client && publishedTrack) {
+      await client.unpublish(publishedTrack);
+    }
+
+    if (publishedTrack) {
+      publishedTrack.stop();
+      publishedTrack.close();
+    }
+
+    if (videoSourceRef.current) {
+      videoSourceRef.current.stop();
+      videoSourceRef.current.close();
+      videoSourceRef.current = null;
+    }
+
+    stopVideoPipeline();
+    clearLocalPlayer();
+    localTracksRef.current.video = null;
+  };
+
+  const publishProcessedVideo = async (sourceTrack, options) => {
+    const processed = await createLandscapeVideoTrack(sourceTrack, options);
+    videoSourceRef.current = sourceTrack;
+    videoPipelineRef.current = processed;
+    localTracksRef.current.video = processed.track;
+    await clientRef.current.publish(processed.track);
+    processed.track.play("local-player", processed.previewConfig);
+    startStatsPolling();
   };
 
   const joinClass = async () => {
@@ -129,13 +315,17 @@ export default function App() {
     const { audio, video } = localTracksRef.current;
     if (audio) await client.unpublish(audio);
     if (video) await client.unpublish(video);
-    if (screenTrackRef.current) await client.unpublish(screenTrackRef.current);
 
     audio && audio.close();
-    video && video.close();
-    screenTrackRef.current && screenTrackRef.current.close();
+    clearStatsPolling();
+    stopVideoPipeline();
+    if (videoSourceRef.current) {
+      videoSourceRef.current.stop();
+      videoSourceRef.current.close();
+      videoSourceRef.current = null;
+    }
+    clearLocalPlayer();
     localTracksRef.current = { audio: null, video: null };
-    screenTrackRef.current = null;
 
     await client.leave();
     clientRef.current = null;
@@ -144,6 +334,7 @@ export default function App() {
     setMicOn(false);
     setCamOn(false);
     setScreenOn(false);
+    setVideoStats(null);
     setStatus("Left");
   };
 
@@ -171,6 +362,7 @@ export default function App() {
     localTracksRef.current.audio.close();
     localTracksRef.current.audio = null;
     setMicOn(false);
+    setPublishing(!!localTracksRef.current.video);
     setStatus("Mic off");
   };
 
@@ -179,84 +371,90 @@ export default function App() {
     if (localTracksRef.current.video) return;
 
     setStatus("Starting camera...");
-    if (!localTracksRef.current.audio) {
-      const [audio, video] = await AgoraRTC.createMicrophoneAndCameraTracks();
-      localTracksRef.current = { audio, video };
-      await clientRef.current.publish([audio, video]);
-      await audio.setEnabled(true);
-      setMicOn(true);
-      setCamOn(true);
-      video.play("local-player");
-      setPublishing(true);
-      setStatus("Camera live");
-      return;
-    }
+    try {
+      if (!localTracksRef.current.audio) {
+        await startMic();
+      }
 
-    const video = await AgoraRTC.createCameraVideoTrack();
-    localTracksRef.current.video = video;
-    await clientRef.current.publish(video);
-    video.play("local-player");
-    setCamOn(true);
-    setPublishing(true);
-    setStatus("Camera live");
+      const sourceTrack = await AgoraRTC.createCameraVideoTrack({
+        encoderConfig: LANDSCAPE_ENCODER_CONFIG,
+        optimizationMode: "motion",
+      });
+
+      await publishProcessedVideo(sourceTrack, {
+        optimizationMode: "motion",
+        mirror: true,
+      });
+      setCamOn(true);
+      setScreenOn(false);
+      setPublishing(true);
+      setStatus("Camera live 1280x720 (16:9)");
+    } catch (e) {
+      await unpublishCurrentVideo().catch(() => {});
+      setCamOn(false);
+      setStatus(`Camera error: ${e?.message || e}`);
+    }
   };
 
   const stopCamera = async () => {
     if (!clientRef.current || !localTracksRef.current.video) return;
-    await clientRef.current.unpublish(localTracksRef.current.video);
-    localTracksRef.current.video.close();
-    localTracksRef.current.video = null;
+    await unpublishCurrentVideo();
     setCamOn(false);
+    setScreenOn(false);
+    setPublishing(!!localTracksRef.current.audio);
     setStatus("Camera off");
   };
 
   const startScreenShare = async () => {
     if (!clientRef.current) return;
-    if (screenTrackRef.current) return;
+    if (screenOn) return;
 
     setStatus("Starting screen share...");
-    const track = await AgoraRTC.createScreenVideoTrack(
-      { encoderConfig: "1080p_1" },
-      "auto"
-    );
-    const videoTrack = Array.isArray(track) ? track[0] : track;
-    screenTrackRef.current = videoTrack;
+    try {
+      const track = await AgoraRTC.createScreenVideoTrack(
+        { encoderConfig: LANDSCAPE_ENCODER_CONFIG, optimizationMode: "detail" },
+        "auto"
+      );
+      const sourceTrack = Array.isArray(track) ? track[0] : track;
 
-    if (localTracksRef.current.video) {
-      await clientRef.current.unpublish(localTracksRef.current.video);
-    }
+      if (localTracksRef.current.video) {
+        await unpublishCurrentVideo();
+      }
 
-    if (localTracksRef.current.audio) {
-      await clientRef.current.publish(localTracksRef.current.audio);
-      await localTracksRef.current.audio.setEnabled(true);
-    }
+      if (localTracksRef.current.audio) {
+        await localTracksRef.current.audio.setEnabled(true);
+      }
 
-    await clientRef.current.publish(videoTrack);
-    document.getElementById("local-player").innerHTML = "";
-    videoTrack.play("local-player");
-    setScreenOn(true);
-    setPublishing(true);
-    setStatus("Screen share live");
-
-    if (videoTrack?.on) {
-      videoTrack.on("track-ended", () => {
-        stopShare().catch(() => {});
+      await publishProcessedVideo(sourceTrack, {
+        optimizationMode: "detail",
+        mirror: false,
       });
+      videoPipelineRef.current.previewConfig = SCREEN_PREVIEW_CONFIG;
+      localTracksRef.current.video.play("local-player", SCREEN_PREVIEW_CONFIG);
+      setScreenOn(true);
+      setCamOn(false);
+      setPublishing(true);
+      setStatus("Screen share live 1280x720 (16:9)");
+
+      if (sourceTrack?.on) {
+        sourceTrack.on("track-ended", () => {
+          stopShare().catch(() => {});
+        });
+      }
+    } catch (e) {
+      await unpublishCurrentVideo().catch(() => {});
+      setScreenOn(false);
+      setStatus(`Share error: ${e?.message || e}`);
     }
   };
 
   const stopShare = async () => {
-    if (!clientRef.current || !screenTrackRef.current) return;
-    await clientRef.current.unpublish(screenTrackRef.current);
-    screenTrackRef.current.close();
-    screenTrackRef.current = null;
+    if (!clientRef.current || !localTracksRef.current.video) return;
+    await unpublishCurrentVideo();
     setScreenOn(false);
+    setCamOn(false);
+    setPublishing(!!localTracksRef.current.audio);
     setStatus("Screen share stopped");
-    if (localTracksRef.current.video) {
-      await clientRef.current.publish(localTracksRef.current.video);
-      document.getElementById("local-player").innerHTML = "";
-      localTracksRef.current.video.play("local-player");
-    }
   };
 
   const endClass = async () => {
@@ -365,6 +563,14 @@ export default function App() {
               </div>
 
               <div className="status">{status}</div>
+              {videoStats && (
+                <div className="status">
+                  Encoded {videoStats.sendResolutionWidth}x{videoStats.sendResolutionHeight}
+                  {" | "}Capture {videoStats.captureResolutionWidth}x
+                  {videoStats.captureResolutionHeight}
+                  {" | "}Bitrate {Math.round((videoStats.sendBitrate || 0) / 1000)} kbps
+                </div>
+              )}
             </div>
           </div>
 
