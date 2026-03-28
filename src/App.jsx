@@ -15,7 +15,11 @@ import { signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
 import { auth, provider, db } from "./firebase";
 import { isTeacherEmail } from "./teacherAccess";
 
-const TOKEN_ENDPOINT = "https://tokenyodha-api.vercel.app/api/agoraToken";
+const API_BASE = "https://tokenyodha-api-two.vercel.app/api";
+const TOKEN_ENDPOINT = `${API_BASE}/agoraToken`;
+const RECORDING_START_ENDPOINT = `${API_BASE}/agoraRecordingStart`;
+const RECORDING_STOP_ENDPOINT = `${API_BASE}/agoraRecordingStop`;
+const RECORDING_QUERY_ENDPOINT = `${API_BASE}/agoraRecordingQuery`;
 const FALLBACK_APP_ID = "f62387c2a1f74173a83a882fbd37b2f9";
 const LANDSCAPE_WIDTH = 1280;
 const LANDSCAPE_HEIGHT = 720;
@@ -51,6 +55,13 @@ export default function App() {
   const videoSourceRef = useRef(null);
   const videoPipelineRef = useRef(null);
   const statsIntervalRef = useRef(null);
+  const recordingStartRequestedRef = useRef(false);
+  const recordingStopRequestedRef = useRef(false);
+  const [recordingSession, setRecordingSession] = useState({
+    resourceId: null,
+    sid: null,
+    recorderUid: null,
+  });
 
   useEffect(() => {
     return onAuthStateChanged(auth, (u) => {
@@ -93,6 +104,16 @@ export default function App() {
     };
   }, [selected?.id]);
 
+  useEffect(() => {
+    recordingStartRequestedRef.current = false;
+    recordingStopRequestedRef.current = false;
+    setRecordingSession({
+      resourceId: selected?.recordingResourceId || null,
+      sid: selected?.recordingSid || null,
+      recorderUid: selected?.recordingRecorderUid || null,
+    });
+  }, [selected?.id, selected?.recordingResourceId, selected?.recordingSid, selected?.recordingRecorderUid]);
+
   const signIn = async () => {
     await signInWithPopup(auth, provider);
   };
@@ -111,6 +132,33 @@ export default function App() {
     const data = await res.json();
     if (!data?.token) throw new Error("Token API returned no token");
     return { token: data.token, appId: data.appId || FALLBACK_APP_ID };
+  };
+
+  const postRecordingRequest = async (url, body) => {
+    if (!user) throw new Error("Teacher login required");
+    const idToken = await user.getIdToken();
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${idToken}`,
+      },
+      body: JSON.stringify(body),
+    });
+
+    const text = await res.text();
+    let data = null;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      data = { raw: text };
+    }
+
+    if (!res.ok || data?.ok === false) {
+      throw new Error(data?.error || data?.raw || `Recording API failed (${res.status})`);
+    }
+
+    return data;
   };
 
   const clearStatsPolling = () => {
@@ -295,13 +343,44 @@ export default function App() {
     const client = AgoraRTC.createClient({ mode: "live", codec: "vp8" });
     clientRef.current = client;
     client.setClientRole("host");
-    await client.join(appId, selected.agoraChannelName, token, null);
+    const teacherRtcUid = await client.join(appId, selected.agoraChannelName, token, null);
     setJoined(true);
     setStatus("Joined");
-    await updateDoc(doc(db, "liveClasses", selected.id), {
+    const updates = {
       status: "live",
       startedAt: serverTimestamp(),
-    });
+    };
+
+    if (!recordingStartRequestedRef.current) {
+      recordingStartRequestedRef.current = true;
+      try {
+        const recording = await postRecordingRequest(RECORDING_START_ENDPOINT, {
+          classId: selected.id,
+          courseId: selected.courseId,
+          channelName: selected.agoraChannelName,
+          teacherRtcUid,
+        });
+
+        setRecordingSession({
+          resourceId: recording.resourceId,
+          sid: recording.sid,
+          recorderUid: recording.recorderUid,
+        });
+
+        updates.recordingStatus = "recording";
+        updates.recordingStartedAt = serverTimestamp();
+        updates.recordingResourceId = recording.resourceId;
+        updates.recordingSid = recording.sid;
+        updates.recordingRecorderUid = recording.recorderUid;
+        updates.recordingError = null;
+      } catch (error) {
+        updates.recordingStatus = "start_failed";
+        updates.recordingError = error?.message || "Failed to start cloud recording";
+        setStatus(`Joined, recording failed: ${error?.message || error}`);
+      }
+    }
+
+    await updateDoc(doc(db, "liveClasses", selected.id), updates);
     try {
       await startMic();
     } catch (e) {
@@ -460,10 +539,63 @@ export default function App() {
   const endClass = async () => {
     if (!selected?.id) return;
     try {
-      await updateDoc(doc(db, "liveClasses", selected.id), {
+      const updates = {
         status: "completed",
         endedAt: serverTimestamp(),
-      });
+      };
+
+      const activeRecording = {
+        resourceId: recordingSession.resourceId || selected.recordingResourceId,
+        sid: recordingSession.sid || selected.recordingSid,
+        recorderUid: recordingSession.recorderUid || selected.recordingRecorderUid,
+      };
+
+      if (
+        !recordingStopRequestedRef.current &&
+        activeRecording.resourceId &&
+        activeRecording.sid &&
+        activeRecording.recorderUid != null
+      ) {
+        recordingStopRequestedRef.current = true;
+        try {
+          const stopResult = await postRecordingRequest(RECORDING_STOP_ENDPOINT, {
+            resourceId: activeRecording.resourceId,
+            sid: activeRecording.sid,
+            channelName: selected.agoraChannelName,
+            recorderUid: activeRecording.recorderUid,
+          });
+
+          updates.recordingStatus = "processing";
+          updates.recordingStoppedAt = serverTimestamp();
+          updates.recordingStopResponse = stopResult.agoraResponse || null;
+          updates.recordingFiles = Array.isArray(stopResult.recordingFiles)
+            ? stopResult.recordingFiles
+            : [];
+          updates.recordingObjectKey =
+            stopResult.primaryFile?.fileName ||
+            stopResult.primaryFile?.filename ||
+            null;
+          updates.recordingError = null;
+
+          try {
+            const queryResult = await postRecordingRequest(RECORDING_QUERY_ENDPOINT, {
+              resourceId: activeRecording.resourceId,
+              sid: activeRecording.sid,
+              channelName: selected.agoraChannelName,
+              recorderUid: activeRecording.recorderUid,
+            });
+            updates.recordingQueryResponse = queryResult.agoraResponse || null;
+          } catch (queryError) {
+            updates.recordingQueryError =
+              queryError?.message || "Failed to query cloud recording status";
+          }
+        } catch (stopError) {
+          updates.recordingStatus = "stop_failed";
+          updates.recordingError = stopError?.message || "Failed to stop cloud recording";
+        }
+      }
+
+      await updateDoc(doc(db, "liveClasses", selected.id), updates);
     } finally {
       await leaveClass();
     }
